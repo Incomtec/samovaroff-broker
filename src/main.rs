@@ -1,22 +1,14 @@
-use tracing::{debug, info};
-use tracing_subscriber::{EnvFilter, fmt};
+mod service;
+use service::Service;
+mod config;
+mod init;
 
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (conf, shutdown) = init::all()?;
 
-    fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_level(true)
-        .compact()
-        .init();
-}
+    let service = Service::new(&conf);
 
-fn main() {
-    init_tracing();
+    service.start(&shutdown);
 
-    info!("tracing starting");
-    debug!(pid = std::process::id(), "process info");
-
-    println!("Hello, world!");
+    Ok(())
 }
