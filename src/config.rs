@@ -10,7 +10,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
             node_id: "node-1".to_string(),
-            bind_addr: "127.0.0.1:7000".to_string(),
+            bind_addr: "[::]:7001".to_string(),
             data_dir: "./data".to_string(),
         }
     }

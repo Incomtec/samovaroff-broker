@@ -1,16 +1,13 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
+use tokio::sync::watch;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::config::AppConfig;
 
-pub type Shutdown = Arc<AtomicBool>;
+pub type Shutdown = watch::Receiver<bool>;
 
-pub fn all() -> Result<(AppConfig, Shutdown), Box<dyn std::error::Error>> {
+pub fn all() -> Result<(AppConfig, tokio::sync::watch::Receiver<bool>), Box<dyn std::error::Error>>
+{
     init_tracing()?;
 
     let conf = AppConfig::load();
@@ -23,7 +20,8 @@ pub fn all() -> Result<(AppConfig, Shutdown), Box<dyn std::error::Error>> {
 
     debug!(pid = std::process::id(), "process info");
 
-    let shutdown = init_shutdown()?;
+    let shutdown = init_shutdown();
+
     Ok((conf, shutdown))
 }
 
@@ -42,12 +40,7 @@ pub fn init_tracing() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn init_shutdown() -> Result<Arc<AtomicBool>, ctrlc::Error> {
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let sh_clone = shutdown.clone();
-    ctrlc::set_handler(move || {
-        sh_clone.store(true, Ordering::SeqCst);
-    })
-    .expect("Error setting Ctrl-C handler");
-    Ok(shutdown)
+pub fn init_shutdown() -> watch::Receiver<bool> {
+    let (_tx, rx) = watch::channel(false);
+    rx
 }
