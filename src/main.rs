@@ -1,6 +1,7 @@
 mod config;
 mod consumer;
 mod init;
+mod protocol;
 mod service;
 
 use service::Service;
