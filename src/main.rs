@@ -1,8 +1,10 @@
 mod config;
 mod consumer;
+mod ingress;
 mod init;
 mod protocol;
 mod service;
+mod stats;
 
 use service::Service;
 use tokio::sync::watch;
