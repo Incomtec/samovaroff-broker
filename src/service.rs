@@ -8,13 +8,14 @@ use tracing::{debug, info};
 
 use crate::ingress;
 use crate::stats::Stats;
-use crate::{config::AppConfig, consumer, init::Shutdown};
+use crate::{config::AppConfig, init::Shutdown, worker};
 
 use crate::queue::Request;
 
 pub struct Service {
     pub bind_addr: String,
     pub max_connections: usize,
+    pub data_dir: String,
 }
 
 impl Service {
@@ -22,6 +23,7 @@ impl Service {
         Service {
             bind_addr: conf.bind_addr.clone(),
             max_connections: conf.max_connections,
+            data_dir: conf.data_dir.clone(),
         }
     }
 
@@ -33,7 +35,7 @@ impl Service {
 
         let (mq_sndr, mq_rcvr) = mpsc::channel::<Request>(100);
 
-        let consumer_task = consumer::spawn_consumer(mq_rcvr);
+        let worker_task = worker::spawn_worker(mq_rcvr, self.data_dir.clone());
 
         let mut shutdown_rx = shutdown.clone();
 
@@ -72,13 +74,15 @@ impl Service {
             }
         }
         drop(listener);
-        drop(mq_sndr);
 
         for task in client_tasks {
             let _ = task.await;
         }
 
-        let _ = consumer_task.await;
+        drop(mq_sndr);
+
+        let _ = worker_task.await;
+
         info!("service shutting down");
 
         let (ack, nack, connections) = stats.snapshot();

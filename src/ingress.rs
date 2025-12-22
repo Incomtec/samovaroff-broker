@@ -5,6 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 
 use crate::init::Shutdown;
 use crate::protocol::Command;
@@ -80,10 +81,19 @@ async fn handle_client(
                     Command::Unknown(text) => text,
                 };
 
-                match try_enqueue(&tx, &stats, payload) {
+                let (commit_tx, commit_rx) = oneshot::channel();
+
+                match try_enqueue(&tx, &stats, payload, commit_tx) {
                     EnqueueResult::Enqueued(id) => {
-                        tracing::info!(id, "enqueued");
-                        send(&mut writer, ACK).await;
+                        // Ждем подтверждение от worker-а: WAL append + fsync
+                        if commit_rx.await.is_ok() {
+                            tracing::info!(id, "committed");
+                            send(&mut writer, ACK).await;
+                        } else {
+                            // worker умер/закрылся - durability не подтверждена
+                            send(&mut writer, b"ERR WAL\n").await;
+                            break;
+                        }
                     }
                     EnqueueResult::Full => {
                         send(&mut writer, NACK).await;

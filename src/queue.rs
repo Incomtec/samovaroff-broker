@@ -1,10 +1,14 @@
-use tokio::sync::mpsc::{Sender, error::TrySendError};
+use tokio::sync::{
+    mpsc::{Sender, error::TrySendError},
+    oneshot,
+};
 
 use crate::stats::Stats;
 
 pub struct Request {
     pub id: u64,
     pub msg: String,
+    pub committed: oneshot::Sender<()>,
 }
 
 pub enum EnqueueResult {
@@ -13,9 +17,14 @@ pub enum EnqueueResult {
     Closed,
 }
 
-pub fn try_enqueue(tx: &Sender<Request>, stats: &Stats, msg: String) -> EnqueueResult {
+pub fn try_enqueue(
+    tx: &Sender<Request>,
+    stats: &Stats,
+    msg: String,
+    committed: oneshot::Sender<()>,
+) -> EnqueueResult {
     let id = stats.new_id();
-    let req = Request { id, msg };
+    let req = Request { id, msg, committed };
 
     match tx.try_send(req) {
         Ok(_) => {
