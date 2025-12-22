@@ -8,18 +8,19 @@ use tokio::sync::mpsc::Sender;
 
 use crate::init::Shutdown;
 use crate::protocol::Command;
-use crate::service::{Request, enqueue_and_reply};
+use crate::queue::{EnqueueResult, Request, try_enqueue};
 use crate::stats::Stats;
 
-pub const ACK: &[u8] = b"ACK\n";
-pub const NACK: &[u8] = b"NACK\n";
-pub const TOO_LARGE: &[u8] = b"ERR TOO_LARGE\n";
-const OK: &[u8] = b"OK\n";
+pub(crate) const ACK: &[u8] = b"ACK\n";
+pub(crate) const NACK: &[u8] = b"NACK\n";
+pub(crate) const TOO_LARGE: &[u8] = b"ERR TOO_LARGE\n";
+pub(crate) const OK: &[u8] = b"OK\n";
+pub(crate) const TIMEOUT: &[u8] = b"ERR TIMEOUT\n";
 
 const MAX_MSG_BYTES: usize = 64 * 1024; // 64KB
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-pub async fn send(writer: &mut OwnedWriteHalf, msg: &[u8]) {
+pub(crate) async fn send(writer: &mut OwnedWriteHalf, msg: &[u8]) {
     let _ = writer.write_all(msg).await;
 }
 
@@ -36,10 +37,10 @@ pub fn spawn_client(
     tx: Sender<Request>,
     shutdown: Shutdown,
     stats: Arc<Stats>,
-) {
+) -> tokio::task::JoinHandle<()> {
     stats.inc_connections();
     tracing::info!(peer = %peer, "client connected");
-    tokio::spawn(handle_client(socket, tx, shutdown, stats));
+    tokio::spawn(handle_client(socket, tx, shutdown, stats))
 }
 
 async fn handle_client(
@@ -59,7 +60,10 @@ async fn handle_client(
                 let line = match timed {
                     Ok(Some(v)) => v,
                     Ok(None) => break,
-                    Err(_) => break,
+                    Err(_) => {
+                        send(&mut writer, TIMEOUT).await;
+                        break;
+                    }
                 };
 
                 if line.len() > MAX_MSG_BYTES {
@@ -76,9 +80,15 @@ async fn handle_client(
                     Command::Unknown(text) => text,
                 };
 
-                // enqueue_and_reply сам отправит ACK/NACK
-                if !enqueue_and_reply(&tx, &mut writer, &stats, payload).await {
-                    break;
+                match try_enqueue(&tx, &stats, payload) {
+                    EnqueueResult::Enqueued(id) => {
+                        tracing::info!(id, "enqueued");
+                        send(&mut writer, ACK).await;
+                    }
+                    EnqueueResult::Full => {
+                        send(&mut writer, NACK).await;
+                    }
+                    EnqueueResult::Closed => break,
                 }
             }
         }

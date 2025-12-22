@@ -4,6 +4,7 @@ pub struct AppConfig {
     pub node_id: String,
     pub bind_addr: String,
     pub data_dir: String,
+    pub max_connections: usize,
 }
 
 impl Default for AppConfig {
@@ -12,6 +13,7 @@ impl Default for AppConfig {
             node_id: "node-1".to_string(),
             bind_addr: "[::]:7001".to_string(),
             data_dir: "./data".to_string(),
+            max_connections: 256,
         }
     }
 }

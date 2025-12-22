@@ -3,6 +3,7 @@ mod consumer;
 mod ingress;
 mod init;
 mod protocol;
+mod queue;
 mod service;
 mod stats;
 

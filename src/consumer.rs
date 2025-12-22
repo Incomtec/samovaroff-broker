@@ -1,6 +1,6 @@
 use tokio::{sync::mpsc::Receiver, task::JoinHandle};
 
-use crate::service::Request;
+use crate::queue::Request;
 
 pub fn spawn_consumer(mut rx: Receiver<Request>) -> JoinHandle<()> {
     tokio::spawn(async move {
