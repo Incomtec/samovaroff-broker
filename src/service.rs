@@ -16,10 +16,12 @@ use tokio::{
 };
 use tracing::{debug, info};
 
+use crate::protocol::Command;
 use crate::{config::AppConfig, consumer, init::Shutdown};
 
 const ACK: &[u8] = b"ACK\n";
 const NACK: &[u8] = b"NACK\n";
+const OK: &[u8] = b"OK\n";
 
 async fn send(writer: &mut OwnedWriteHalf, msg: &[u8]) {
     let _ = writer.write_all(msg).await;
@@ -98,7 +100,16 @@ async fn handle_client(
             _ = shutdown.changed() => break,
             msg = next_line(&mut lines) => {
                 let Some(msg) = msg else { break; };
-                if !enqueue_and_reply(&tx, &mut writer, &stats, msg).await { break; }
+
+                let payload = match Command::parse(&msg) {
+                    Command::Ping => {
+                        send(&mut writer, OK).await;
+                        continue;
+                    }
+                    Command::Echo(text) => text,
+                    Command::Unknown(_) => msg,
+                };
+                if !enqueue_and_reply(&tx, &mut writer, &stats, payload).await { break; }
             }
         }
     }
