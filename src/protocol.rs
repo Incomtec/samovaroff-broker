@@ -24,29 +24,62 @@ impl Response {
 
 pub enum Command {
     Ping,
-    Echo(String),
+    Pub {
+        topic: String,
+        payload: String,
+    },
+    Fetch {
+        topic: String,
+        offset: u64,
+        limit: usize,
+    },
     Unknown(String),
-    Fetch { offset: u64, limit: usize },
 }
 
 impl Command {
-    pub fn parse(cmd: &str) -> Self {
-        let cmd = cmd.trim();
-        if cmd == "PING" {
-            Command::Ping
-        } else if let Some(rest) = cmd.strip_prefix("ECHO ") {
-            Command::Echo(rest.to_string())
-        } else if let Some(rest) = cmd.strip_prefix("FETCH ") {
-            let mut it = rest.split_whitespace();
-            let off = it.next().and_then(|v| v.parse::<u64>().ok());
-            let lim = it.next().and_then(|v| v.parse::<usize>().ok());
-            if let (Some(offset), Some(limit)) = (off, lim) {
-                Command::Fetch { offset, limit }
-            } else {
-                Command::Unknown(cmd.to_string())
-            }
-        } else {
-            Command::Unknown(cmd.to_string())
+    pub fn parse(line: &str) -> Self {
+        let line = line.trim();
+
+        if line == "PING" {
+            return Command::Ping;
         }
+
+        if let Some(rest) = line.strip_prefix("PUB ") {
+            // PUB <topic> <payload...>
+            let mut it = rest.splitn(2, ' ');
+            let topic = it.next().unwrap_or("").trim();
+            let payload = it.next().unwrap_or("").to_string();
+
+            if topic.is_empty() {
+                return Command::Unknown(line.to_string());
+            }
+
+            return Command::Pub {
+                topic: topic.to_string(),
+                payload,
+            };
+        }
+
+        if let Some(rest) = line.strip_prefix("FETCH ") {
+            // FETCH <topic> <offset> <limit>
+            let mut it = rest.split_whitespace();
+            let topic = it.next().unwrap_or("").to_string();
+            let offset = it.next().and_then(|v| v.parse::<u64>().ok());
+            let limit = it.next().and_then(|v| v.parse::<usize>().ok());
+
+            if !topic.is_empty()
+                && let (Some(offset), Some(limit)) = (offset, limit)
+            {
+                return Command::Fetch {
+                    topic,
+                    offset,
+                    limit,
+                };
+            }
+
+            return Command::Unknown(line.to_string());
+        }
+
+        Command::Unknown(line.to_string())
     }
 }

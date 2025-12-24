@@ -7,11 +7,13 @@ use crate::{stats::Stats, wal::WalRecord};
 
 pub enum Request {
     Produce {
+        topic: String,
         id: u64,
         msg: String,
         committed: oneshot::Sender<()>,
     },
     Fetch {
+        topic: String,
         from: u64,
         limit: usize,
         reply: oneshot::Sender<Vec<WalRecord>>,
@@ -27,11 +29,17 @@ pub enum EnqueueResult {
 pub fn try_enqueue(
     tx: &Sender<Request>,
     stats: &Stats,
+    topic: String,
     msg: String,
     committed: oneshot::Sender<()>,
 ) -> EnqueueResult {
     let id = stats.new_id();
-    let req = Request::Produce { id, msg, committed };
+    let req = Request::Produce {
+        topic,
+        id,
+        msg,
+        committed,
+    };
 
     match tx.try_send(req) {
         Ok(_) => EnqueueResult::Enqueued(id),

@@ -55,8 +55,12 @@ async fn process_line(
             reply(writer, stats, Response::Ok).await;
             true
         }
-        Command::Echo(text) => handle_produce(tx, stats, writer, text).await,
-        Command::Fetch { offset, limit } => handle_fetch(tx, stats, writer, offset, limit).await,
+        Command::Pub { topic, payload } => handle_produce(tx, stats, writer, topic, payload).await,
+        Command::Fetch {
+            topic,
+            offset,
+            limit,
+        } => handle_fetch(tx, stats, writer, topic, offset, limit).await,
         Command::Unknown(text) => {
             tracing::warn!(cmd = %text, "unknown command");
             reply(writer, stats, Response::Nack).await;
@@ -81,12 +85,14 @@ async fn handle_fetch(
     tx: &Sender<Request>,
     stats: &Stats,
     writer: &mut OwnedWriteHalf,
+    topic: String,
     from: u64,
     limit: usize,
 ) -> bool {
     let (reply_tx, reply_rx) = oneshot::channel();
 
     let req = Request::Fetch {
+        topic,
         from,
         limit,
         reply: reply_tx,
@@ -120,11 +126,12 @@ async fn handle_produce(
     tx: &Sender<Request>,
     stats: &Stats,
     writer: &mut OwnedWriteHalf,
+    topic: String,
     payload: String,
 ) -> bool {
     let (commit_tx, commit_rx) = oneshot::channel();
 
-    match try_enqueue(tx, stats, payload, commit_tx) {
+    match try_enqueue(tx, stats, topic, payload, commit_tx) {
         EnqueueResult::Enqueued(id) => {
             if commit_rx.await.is_ok() {
                 tracing::info!(id, "committed");
