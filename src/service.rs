@@ -6,9 +6,9 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use crate::ingress;
 use crate::stats::Stats;
 use crate::{config::AppConfig, init::Shutdown, worker};
+use crate::{ingress, protocol::Response};
 
 use crate::queue::Request;
 
@@ -53,9 +53,8 @@ impl Service {
                 res = listener.accept() => {
                     if let Ok((socket, peer)) = res {
                         if client_tasks.len() >= self.max_connections {
-                            use tokio::io::AsyncWriteExt;
-                            let mut socket = socket;
-                            let _ = socket.write_all(b"ERR BUSY\n").await;
+                            let (mut _r, mut w) = socket.into_split();
+                            ingress::reply(&mut w, stats.as_ref(), Response::ErrBusy).await;
                             continue;
                         }
                         debug_assert!(client_tasks.len() <= self.max_connections);
@@ -85,8 +84,8 @@ impl Service {
 
         info!("service shutting down");
 
-        let (ack, nack, connections) = stats.snapshot();
-        info!(ack, nack, connections, "broker stats");
+        let (ack, nack, err_wal, connections) = stats.snapshot();
+        info!(ack, nack, err_wal, connections, "broker stats");
 
         Ok(())
     }

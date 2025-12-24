@@ -3,12 +3,19 @@ use tokio::sync::{
     oneshot,
 };
 
-use crate::stats::Stats;
+use crate::{stats::Stats, wal::WalRecord};
 
-pub struct Request {
-    pub id: u64,
-    pub msg: String,
-    pub committed: oneshot::Sender<()>,
+pub enum Request {
+    Produce {
+        id: u64,
+        msg: String,
+        committed: oneshot::Sender<()>,
+    },
+    Fetch {
+        from: u64,
+        limit: usize,
+        reply: oneshot::Sender<Vec<WalRecord>>,
+    },
 }
 
 pub enum EnqueueResult {
@@ -24,17 +31,11 @@ pub fn try_enqueue(
     committed: oneshot::Sender<()>,
 ) -> EnqueueResult {
     let id = stats.new_id();
-    let req = Request { id, msg, committed };
+    let req = Request::Produce { id, msg, committed };
 
     match tx.try_send(req) {
-        Ok(_) => {
-            stats.inc_ack();
-            EnqueueResult::Enqueued(id)
-        }
-        Err(TrySendError::Full(_)) => {
-            stats.inc_nack();
-            EnqueueResult::Full
-        }
+        Ok(_) => EnqueueResult::Enqueued(id),
+        Err(TrySendError::Full(_)) => EnqueueResult::Full,
         Err(TrySendError::Closed(_)) => EnqueueResult::Closed,
     }
 }

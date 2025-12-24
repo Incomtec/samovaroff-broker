@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct Stats {
     pub ack: AtomicU64,
     pub nack: AtomicU64,
+    pub err_wal: AtomicU64,
     pub connections: AtomicU64,
     pub next_id: AtomicU64,
 }
@@ -21,14 +22,19 @@ impl Stats {
         self.nack.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn inc_err_wal(&self) {
+        self.err_wal.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn inc_connections(&self) {
         self.connections.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn snapshot(&self) -> (u64, u64, u64) {
+    pub fn snapshot(&self) -> (u64, u64, u64, u64) {
         (
             self.ack.load(Ordering::Relaxed),
             self.nack.load(Ordering::Relaxed),
+            self.err_wal.load(Ordering::Relaxed),
             self.connections.load(Ordering::Relaxed),
         )
     }

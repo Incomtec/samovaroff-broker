@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::{
     fs::{File, OpenOptions, read_dir, rename},
     io::{BufRead, BufReader, Seek, SeekFrom, Write},
@@ -5,6 +6,48 @@ use std::{
 };
 
 const MAX_WAL_BYTES: u64 = 16 * 1024 * 1024; // 16MB
+
+pub struct WalRecord {
+    pub offset: u64,
+    pub id: u64,
+    pub payload: String,
+}
+
+// struct WalEntry {
+//     offset: u64,
+//     id: u64,
+//     payload_b64: String,
+// }
+
+fn list_wal_files(data_dir: &Path) -> std::io::Result<Vec<(u64, PathBuf)>> {
+    let mut files: Vec<(u64, PathBuf)> = Vec::new();
+
+    for entry in read_dir(data_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+
+        if name == "wal.log" {
+            files.push((u64::MAX, path));
+            continue;
+        }
+
+        if let Some(rest) = name.strip_prefix("wal.")
+            && let Some(num) = rest.strip_suffix(".log")
+            && let Ok(n) = num.parse::<u64>()
+        {
+            files.push((n, path));
+        }
+    }
+
+    files.sort_by_key(|(n, _)| *n);
+    Ok(files)
+}
 
 pub struct Wal {
     file: File,
@@ -40,7 +83,13 @@ impl Wal {
         Ok(wal)
     }
 
-    pub fn append(&mut self, id: u64, payload_b64: &str) -> std::io::Result<u64> {
+    pub fn append_msg(&mut self, id: u64, msg: &str) -> std::io::Result<u64> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let payload_b64 = STANDARD.encode(msg.as_bytes());
+        self.append_b64(id, &payload_b64)
+    }
+
+    fn append_b64(&mut self, id: u64, payload_b64: &str) -> std::io::Result<u64> {
         self.rotate_if_needed()?;
 
         let offset = self.next_offset;
@@ -79,32 +128,11 @@ impl Wal {
     }
 
     fn recover_all(&mut self) -> std::io::Result<()> {
-        // 1) читаем сегменты wal.<n>.log по возрастанию n
-        let mut segments: Vec<(u64, PathBuf)> = Vec::new();
-        for entry in read_dir(&self.data_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                // имя вида wal.<n>.log
-                if let Some(rest) = name.strip_prefix("wal.")
-                    && let Some(num) = rest.strip_suffix(".log")
-                    && let Ok(n) = num.parse::<u64>()
-                {
-                    // исключаем текущий wal.log
-                    if name != "wal.log" {
-                        segments.push((n, path));
-                    }
-                }
-            }
-        }
-        segments.sort_by_key(|(n, _)| *n);
+        let files = list_wal_files(&self.data_dir)?;
 
         let mut expected: u64 = 0;
 
-        for (start, path) in segments {
+        for (start, path) in files.iter().filter(|(n, _)| *n != u64::MAX).cloned() {
             if start != expected {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -114,8 +142,8 @@ impl Wal {
             expected = Self::recover_file(&path, expected, false)?.0;
         }
 
-        // 2) затем текущий wal.log (может иметь битый хвост)
         let (next, valid_end) = Self::recover_file(&self.wal_path, expected, true)?;
+
         self.next_offset = next;
         self.segment_start_offset = expected;
 
@@ -180,6 +208,58 @@ impl Wal {
         }
 
         Ok((expected, valid_end_pos))
+    }
+
+    pub fn read_from(&self, from: u64, limit: usize) -> std::io::Result<Vec<WalRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let files = list_wal_files(&self.data_dir)?;
+
+        let mut out = Vec::with_capacity(limit);
+
+        for (_n, path) in files {
+            let f = OpenOptions::new().read(true).open(&path)?;
+            let reader = BufReader::new(f);
+
+            for line in reader.lines() {
+                let line = line?;
+                let Some((off, id, payload)) = parse_record(&line) else {
+                    continue;
+                };
+
+                if off < from {
+                    continue;
+                }
+
+                let bytes = STANDARD.decode(payload.as_bytes()).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "wal payload base64 decode failed",
+                    )
+                })?;
+
+                let payload = String::from_utf8(bytes).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "wal payload utf8 decode failed",
+                    )
+                })?;
+
+                out.push(WalRecord {
+                    offset: off,
+                    id,
+                    payload: payload.to_string(),
+                });
+
+                if out.len() >= limit {
+                    return Ok(out);
+                }
+            }
+        }
+
+        Ok(out)
     }
 }
 
